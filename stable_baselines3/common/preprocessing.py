@@ -125,6 +125,8 @@ def preprocess_obs(
         return F.one_hot(obs.long(), num_classes=int(observation_space.n)).float()
 
     elif isinstance(observation_space, spaces.MultiDiscrete):
+        # this cheeky one-liner works for any dimension of MultiDiscrete, why not allow n-dimentional MultiDiscrete
+        # return (np.arange(a.max()) == a[...,None]-1).astype(int)
         # Tensor concatenation of one hot encodings of each Categorical sub-space
         return th.cat(
             [
@@ -157,6 +159,8 @@ def get_obs_shape(
     elif isinstance(observation_space, spaces.MultiDiscrete):
         # Number of discrete features
         return (int(len(observation_space.nvec)),)
+        # why not allow n-dimentional MultiDiscrete, then use like:
+        # return observation_space.sample().shape
     elif isinstance(observation_space, spaces.MultiBinary):
         # Number of binary features
         return observation_space.shape

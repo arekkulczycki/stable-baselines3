@@ -56,6 +56,7 @@ class BaseModel(nn.Module):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     optimizer: th.optim.Optimizer
@@ -70,6 +71,7 @@ class BaseModel(nn.Module):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__()
 
@@ -83,6 +85,7 @@ class BaseModel(nn.Module):
         self.action_space = action_space
         self.features_extractor = features_extractor
         self.normalize_images = normalize_images
+        self.should_preprocess_obs = should_preprocess_obs
 
         self.optimizer_class = optimizer_class
         self.optimizer_kwargs = optimizer_kwargs
@@ -127,8 +130,9 @@ class BaseModel(nn.Module):
         :param features_extractor: The features extractor to use.
         :return: The extracted features
         """
-        preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
-        return features_extractor(preprocessed_obs)
+        if self.should_preprocess_obs:
+            return features_extractor(preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images))
+        return features_extractor(obs)
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
@@ -441,6 +445,7 @@ class ActorCriticPolicy(BasePolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -462,6 +467,7 @@ class ActorCriticPolicy(BasePolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -478,6 +484,7 @@ class ActorCriticPolicy(BasePolicy):
             optimizer_kwargs=optimizer_kwargs,
             squash_output=squash_output,
             normalize_images=normalize_images,
+            should_preprocess_obs=should_preprocess_obs,
         )
 
         if isinstance(net_arch, list) and len(net_arch) > 0 and isinstance(net_arch[0], dict):
@@ -791,6 +798,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -812,6 +820,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__(
             observation_space,
@@ -831,6 +840,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
             normalize_images,
             optimizer_class,
             optimizer_kwargs,
+            should_preprocess_obs,
         )
 
 
@@ -864,6 +874,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -885,6 +896,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__(
             observation_space,
@@ -904,6 +916,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
             normalize_images,
             optimizer_class,
             optimizer_kwargs,
+            should_preprocess_obs,
         )
 
 

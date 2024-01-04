@@ -734,6 +734,7 @@ class BaseAlgorithm(ABC):
         # load parameters
         model.__dict__.update(data)
         model.__dict__.update(kwargs)
+        model.__dict__.update(kwargs.get("param_override", {}))
         model._setup_model()
 
         try:

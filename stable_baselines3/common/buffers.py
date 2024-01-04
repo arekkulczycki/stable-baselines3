@@ -1,10 +1,9 @@
-import warnings
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union
-
 import numpy as np
 import torch as th
+import warnings
+from abc import ABC, abstractmethod
 from gymnasium import spaces
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 from stable_baselines3.common.preprocessing import get_action_dim, get_obs_shape
 from stable_baselines3.common.type_aliases import (
@@ -59,7 +58,7 @@ class BaseBuffer(ABC):
         self.n_envs = n_envs
 
     @staticmethod
-    def swap_and_flatten(arr: np.ndarray) -> np.ndarray:
+    def swap_and_flatten(arr: th.Tensor) -> th.Tensor:
         """
         Swap and then flatten axes 0 (buffer_size) and 1 (n_envs)
         to convert shape from [n_steps, n_envs, ...] (when ... is the shape of the features)
@@ -71,7 +70,7 @@ class BaseBuffer(ABC):
         shape = arr.shape
         if len(shape) < 3:
             shape = (*shape, 1)
-        return arr.swapaxes(0, 1).reshape(shape[0] * shape[1], *shape[2:])
+        return th.transpose(arr, 0, 1).reshape(shape[0] * shape[1], *shape[2:])
 
     def size(self) -> int:
         """
@@ -124,7 +123,7 @@ class BaseBuffer(ABC):
         """
         raise NotImplementedError()
 
-    def to_torch(self, array: np.ndarray, copy: bool = True) -> th.Tensor:
+    def to_torch(self, array: th.Tensor, copy: bool = True) -> th.Tensor:
         """
         Convert a numpy array to a PyTorch tensor.
         Note: it copies the data by default
@@ -135,8 +134,8 @@ class BaseBuffer(ABC):
         :return:
         """
         if copy:
-            return th.tensor(array, device=self.device)
-        return th.as_tensor(array, device=self.device)
+            return array.clone().detach()
+        return array
 
     @staticmethod
     def _normalize_obs(
@@ -362,14 +361,14 @@ class RolloutBuffer(BaseBuffer):
     :param n_envs: Number of parallel environments
     """
 
-    observations: np.ndarray
-    actions: np.ndarray
-    rewards: np.ndarray
-    advantages: np.ndarray
-    returns: np.ndarray
-    episode_starts: np.ndarray
-    log_probs: np.ndarray
-    values: np.ndarray
+    observations: th.Tensor
+    actions: th.Tensor
+    rewards: th.Tensor
+    advantages: th.Tensor
+    returns: th.Tensor
+    episode_starts: th.Tensor
+    log_probs: th.Tensor
+    values: th.Tensor
 
     def __init__(
         self,
@@ -388,14 +387,14 @@ class RolloutBuffer(BaseBuffer):
         self.reset()
 
     def reset(self) -> None:
-        self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=np.float32)
-        self.actions = np.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=np.float32)
-        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.episode_starts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.observations = th.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=th.float32).to(self.device)
+        self.actions = th.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=th.float32).to(self.device)
+        self.rewards = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
+        self.returns = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
+        self.episode_starts = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
+        self.values = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
+        self.log_probs = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
+        self.advantages = th.zeros((self.buffer_size, self.n_envs), dtype=th.float32).to(self.device)
         self.generator_ready = False
         super().reset()
 
@@ -418,16 +417,15 @@ class RolloutBuffer(BaseBuffer):
         :param last_values: state value estimation for the last step (one for each env)
         :param dones: if the last step was a terminal step (one bool for each env).
         """
-        # Convert to numpy
-        last_values = last_values.clone().cpu().numpy().flatten()
+        last_values = last_values.clone().flatten()
 
         last_gae_lam = 0
         for step in reversed(range(self.buffer_size)):
             if step == self.buffer_size - 1:
-                next_non_terminal = 1.0 - dones
+                next_non_terminal = th.logical_not(dones)
                 next_values = last_values
             else:
-                next_non_terminal = 1.0 - self.episode_starts[step + 1]
+                next_non_terminal = th.logical_not(self.episode_starts[step + 1])
                 next_values = self.values[step + 1]
             delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.values[step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
@@ -438,10 +436,10 @@ class RolloutBuffer(BaseBuffer):
 
     def add(
         self,
-        obs: np.ndarray,
-        action: np.ndarray,
-        reward: np.ndarray,
-        episode_start: np.ndarray,
+        obs: th.Tensor,
+        action: th.Tensor,
+        reward: th.Tensor,
+        episode_start: th.Tensor,
         value: th.Tensor,
         log_prob: th.Tensor,
     ) -> None:
@@ -467,12 +465,12 @@ class RolloutBuffer(BaseBuffer):
         # Reshape to handle multi-dim and discrete action spaces, see GH #970 #1392
         action = action.reshape((self.n_envs, self.action_dim))
 
-        self.observations[self.pos] = np.array(obs)
-        self.actions[self.pos] = np.array(action)
-        self.rewards[self.pos] = np.array(reward)
-        self.episode_starts[self.pos] = np.array(episode_start)
-        self.values[self.pos] = value.clone().cpu().numpy().flatten()
-        self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
+        self.observations[self.pos] = obs
+        self.actions[self.pos] = action
+        self.rewards[self.pos] = reward
+        self.episode_starts[self.pos] = episode_start
+        self.values[self.pos] = value.clone().flatten()
+        self.log_probs[self.pos] = log_prob.clone()
         self.pos += 1
         if self.pos == self.buffer_size:
             self.full = True
@@ -539,8 +537,8 @@ class DictReplayBuffer(ReplayBuffer):
 
     observation_space: spaces.Dict
     obs_shape: Dict[str, Tuple[int, ...]]  # type: ignore[assignment]
-    observations: Dict[str, np.ndarray]  # type: ignore[assignment]
-    next_observations: Dict[str, np.ndarray]  # type: ignore[assignment]
+    observations: Dict[str, th.Tensor]  # type: ignore[assignment]
+    next_observations: Dict[str, th.Tensor]  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -567,19 +565,19 @@ class DictReplayBuffer(ReplayBuffer):
         self.optimize_memory_usage = optimize_memory_usage
 
         self.observations = {
-            key: np.zeros((self.buffer_size, self.n_envs, *_obs_shape), dtype=observation_space[key].dtype)
+            key: th.zeros((self.buffer_size, self.n_envs, *_obs_shape), dtype=observation_space[key].dtype).to(self.device)
             for key, _obs_shape in self.obs_shape.items()
         }
         self.next_observations = {
-            key: np.zeros((self.buffer_size, self.n_envs, *_obs_shape), dtype=observation_space[key].dtype)
+            key: th.zeros((self.buffer_size, self.n_envs, *_obs_shape), dtype=observation_space[key].dtype).to(self.device)
             for key, _obs_shape in self.obs_shape.items()
         }
 
-        self.actions = np.zeros(
+        self.actions = th.zeros(
             (self.buffer_size, self.n_envs, self.action_dim), dtype=self._maybe_cast_dtype(action_space.dtype)
-        )
-        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        ).to(self.device)
+        self.rewards = th.zeros((self.buffer_size, self.n_envs), dtype=np.float32).to(self.device)
+        self.dones = th.zeros((self.buffer_size, self.n_envs), dtype=np.float32).to(self.device)
 
         # Handle timeouts termination properly if needed
         # see https://github.com/DLR-RM/stable-baselines3/issues/284
@@ -622,12 +620,12 @@ class DictReplayBuffer(ReplayBuffer):
             # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
             if isinstance(self.observation_space.spaces[key], spaces.Discrete):
                 obs[key] = obs[key].reshape((self.n_envs,) + self.obs_shape[key])
-            self.observations[key][self.pos] = np.array(obs[key])
+            self.observations[key][self.pos] = obs[key]
 
         for key in self.next_observations.keys():
             if isinstance(self.observation_space.spaces[key], spaces.Discrete):
                 next_obs[key] = next_obs[key].reshape((self.n_envs,) + self.obs_shape[key])
-            self.next_observations[key][self.pos] = np.array(next_obs[key])
+            self.next_observations[key][self.pos] = next_obs[key]
 
         # Reshape to handle multi-dim and discrete action spaces, see GH #970 #1392
         action = action.reshape((self.n_envs, self.action_dim))
@@ -719,7 +717,7 @@ class DictRolloutBuffer(RolloutBuffer):
 
     observation_space: spaces.Dict
     obs_shape: Dict[str, Tuple[int, ...]]  # type: ignore[assignment]
-    observations: Dict[str, np.ndarray]  # type: ignore[assignment]
+    observations: Dict[str, th.Tensor]  # type: ignore[assignment]
 
     def __init__(
         self,

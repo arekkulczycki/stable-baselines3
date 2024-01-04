@@ -1,17 +1,16 @@
 """Abstract base classes for RL algorithms."""
 
+import gymnasium as gym
 import io
+import numpy as np
 import pathlib
 import time
+import torch as th
 import warnings
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, ClassVar, Dict, Iterable, List, Optional, Tuple, Type, TypeVar, Union
-
-import gymnasium as gym
-import numpy as np
-import torch as th
 from gymnasium import spaces
+from typing import Any, ClassVar, Dict, Iterable, List, Optional, Tuple, Type, TypeVar, Union
 
 from stable_baselines3.common import utils
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, ConvertCallback, ProgressBarCallback
@@ -20,8 +19,10 @@ from stable_baselines3.common.logger import Logger
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space, is_image_space_channels_first
-from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, save_to_zip_file
+from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space, \
+    is_image_space_channels_first
+from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, \
+    save_to_zip_file
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, TensorDict
 from stable_baselines3.common.utils import (
     check_for_correct_spaces,
@@ -141,10 +142,10 @@ class BaseAlgorithm(ABC):
         self.start_time = 0.0
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
-        self._last_obs = None  # type: Optional[Union[np.ndarray, Dict[str, np.ndarray]]]
+        self._last_obs = None  # type: Optional[Union[th.Tensor, Dict[str, th.Tensor]]]
         self._last_episode_starts = None  # type: Optional[np.ndarray]
         # When using VecNormalize:
-        self._last_original_obs = None  # type: Optional[Union[np.ndarray, Dict[str, np.ndarray]]]
+        self._last_original_obs = None  # type: Optional[Union[th.Tensor, Dict[str, th.Tensor]]]
         self._episode_num = 0
         # Used for gSDE only
         self.use_sde = use_sde
@@ -421,7 +422,7 @@ class BaseAlgorithm(ABC):
         if reset_num_timesteps or self._last_obs is None:
             assert self.env is not None
             self._last_obs = self.env.reset()  # type: ignore[assignment]
-            self._last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
+            self._last_episode_starts = th.ones((self.env.num_envs,), dtype=bool)
             # Retrieve unnormalized observation for saving into the buffer
             if self._vec_normalize_env is not None:
                 self._last_original_obs = self._vec_normalize_env.get_original_obs()
@@ -435,7 +436,7 @@ class BaseAlgorithm(ABC):
 
         return total_timesteps, callback
 
-    def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: Optional[np.ndarray] = None) -> None:
+    def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: Optional[th.Tensor] = None) -> None:
         """
         Retrieve reward, episode length, episode success and update the buffer
         if using Monitor wrapper or a GoalEnv.
@@ -447,7 +448,7 @@ class BaseAlgorithm(ABC):
         assert self.ep_success_buffer is not None
 
         if dones is None:
-            dones = np.array([False] * len(infos))
+            dones = th.BoolTensor([False] * len(infos))
         for idx, info in enumerate(infos):
             maybe_ep_info = info.get("episode")
             maybe_is_success = info.get("is_success")
@@ -734,6 +735,7 @@ class BaseAlgorithm(ABC):
         # load parameters
         model.__dict__.update(data)
         model.__dict__.update(kwargs)
+        model.__dict__.update(kwargs.get("param_override", {}))
         model._setup_model()
 
         try:

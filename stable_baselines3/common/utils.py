@@ -46,7 +46,7 @@ def set_random_seed(seed: int, using_cuda: bool = False) -> None:
 
 
 # From stable baselines
-def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> np.ndarray:
+def explained_variance(y_pred: th.Tensor, y_true: th.Tensor) -> np.ndarray:
     """
     Computes fraction of variance that ypred explains about y.
     Returns 1 - Var[y-ypred] / Var[y]
@@ -61,8 +61,8 @@ def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> np.ndarray:
     :return: explained variance of ypred and y
     """
     assert y_true.ndim == 1 and y_pred.ndim == 1
-    var_y = np.var(y_true)
-    return np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+    var_y = th.var(y_true, correction=0)
+    return np.nan if var_y == 0 else 1 - th.var(y_true - y_pred, correction=0) / var_y
 
 
 def update_learning_rate(optimizer: th.optim.Optimizer, learning_rate: float) -> None:
@@ -471,7 +471,7 @@ def polyak_update(
             th.add(target_param.data, param.data, alpha=tau, out=target_param.data)
 
 
-def obs_as_tensor(obs: Union[np.ndarray, Dict[str, np.ndarray]], device: th.device) -> Union[th.Tensor, TensorDict]:
+def obs_as_tensor(obs: Union[np.ndarray, Dict[str, np.ndarray], th.Tensor], device: th.device) -> Union[th.Tensor, TensorDict]:
     """
     Moves the observation to the given device.
 
@@ -479,7 +479,9 @@ def obs_as_tensor(obs: Union[np.ndarray, Dict[str, np.ndarray]], device: th.devi
     :param device: PyTorch device
     :return: PyTorch tensor of the observation on a desired device.
     """
-    if isinstance(obs, np.ndarray):
+    if isinstance(obs, th.Tensor):
+        return obs.to(device)
+    elif isinstance(obs, np.ndarray):
         return th.as_tensor(obs, device=device)
     elif isinstance(obs, dict):
         return {key: th.as_tensor(_obs, device=device) for (key, _obs) in obs.items()}

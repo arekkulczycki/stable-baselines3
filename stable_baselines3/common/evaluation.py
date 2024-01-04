@@ -1,8 +1,8 @@
-import warnings
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
 import gymnasium as gym
 import numpy as np
+import torch as th
+import warnings
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from stable_baselines3.common import type_aliases
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
@@ -130,8 +130,9 @@ def evaluate_policy(
         if render:
             env.render()
 
-    mean_reward = np.mean(episode_rewards)
-    std_reward = np.std(episode_rewards)
+    episode_rewards = th.from_numpy(episode_rewards)
+    mean_reward = th.mean(episode_rewards).item()
+    std_reward = th.std(episode_rewards).item()
     if reward_threshold is not None:
         assert mean_reward > reward_threshold, "Mean reward below threshold: " f"{mean_reward:.2f} < {reward_threshold:.2f}"
     if return_episode_rewards:

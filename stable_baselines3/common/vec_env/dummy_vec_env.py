@@ -1,10 +1,10 @@
+import gymnasium as gym
+import numpy as np
+import torch as th
 import warnings
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type
-
-import gymnasium as gym
-import numpy as np
 
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvIndices, VecEnvObs, VecEnvStepReturn
 from stable_baselines3.common.vec_env.patch_gym import _patch_env
@@ -24,6 +24,7 @@ class DummyVecEnv(VecEnv):
     :raises ValueError: If the same environment instance is passed as the output of two or more different env_fn.
     """
 
+    device: str = "cpu"
     actions: np.ndarray
 
     def __init__(self, env_fns: List[Callable[[], gym.Env]]):
@@ -42,10 +43,9 @@ class DummyVecEnv(VecEnv):
         super().__init__(len(env_fns), env.observation_space, env.action_space)
         obs_space = env.observation_space
         self.keys, shapes, dtypes = obs_space_info(obs_space)
-
-        self.buf_obs = OrderedDict([(k, np.zeros((self.num_envs, *tuple(shapes[k])), dtype=dtypes[k])) for k in self.keys])
-        self.buf_dones = np.zeros((self.num_envs,), dtype=bool)
-        self.buf_rews = np.zeros((self.num_envs,), dtype=np.float32)
+        self.buf_obs = OrderedDict([(k, th.zeros((self.num_envs, *tuple(shapes[k]))).to(self.device)) for k in self.keys])
+        self.buf_dones = th.zeros((self.num_envs,), dtype=bool).to(self.device)
+        self.buf_rews = th.zeros((self.num_envs,), dtype=th.float32).to(self.device)
         self.buf_infos: List[Dict[str, Any]] = [{} for _ in range(self.num_envs)]
         self.metadata = env.metadata
 
@@ -69,7 +69,7 @@ class DummyVecEnv(VecEnv):
                 self.buf_infos[env_idx]["terminal_observation"] = obs
                 obs, self.reset_infos[env_idx] = self.envs[env_idx].reset()
             self._save_obs(env_idx, obs)
-        return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), deepcopy(self.buf_infos))
+        return (self._obs_from_buf(), th.clone(self.buf_rews), th.clone(self.buf_dones), deepcopy(self.buf_infos))
 
     def reset(self) -> VecEnvObs:
         for env_idx in range(self.num_envs):
@@ -100,7 +100,8 @@ class DummyVecEnv(VecEnv):
 
         :param mode: The rendering type.
         """
-        return super().render(mode=mode)
+        for i, env in enumerate(self.envs):
+            env.render()
 
     def _save_obs(self, env_idx: int, obs: VecEnvObs) -> None:
         for key in self.keys:

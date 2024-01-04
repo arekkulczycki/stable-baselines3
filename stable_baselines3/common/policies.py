@@ -2,15 +2,14 @@
 
 import collections
 import copy
+import numpy as np
+import torch as th
 import warnings
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-
-import numpy as np
-import torch as th
 from gymnasium import spaces
 from torch import nn
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from stable_baselines3.common.distributions import (
     BernoulliDistribution,
@@ -56,6 +55,7 @@ class BaseModel(nn.Module):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     optimizer: th.optim.Optimizer
@@ -70,6 +70,7 @@ class BaseModel(nn.Module):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__()
 
@@ -83,6 +84,7 @@ class BaseModel(nn.Module):
         self.action_space = action_space
         self.features_extractor = features_extractor
         self.normalize_images = normalize_images
+        self.should_preprocess_obs = should_preprocess_obs
 
         self.optimizer_class = optimizer_class
         self.optimizer_kwargs = optimizer_kwargs
@@ -127,8 +129,9 @@ class BaseModel(nn.Module):
         :param features_extractor: The features extractor to use.
         :return: The extracted features
         """
-        preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
-        return features_extractor(preprocessed_obs)
+        if self.should_preprocess_obs:
+            return features_extractor(preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images))
+        return features_extractor(obs)
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
@@ -271,6 +274,9 @@ class BaseModel(nn.Module):
             # Add batch dimension if needed
             observation = observation.reshape((-1, *self.observation_space.shape))  # type: ignore[misc]
 
+        if isinstance(observation, np.ndarray):
+            observation = th.from_numpy(observation).to(self.device)
+
         obs_tensor = obs_as_tensor(observation, self.device)
         return obs_tensor, vectorized_env
 
@@ -328,7 +334,7 @@ class BasePolicy(BaseModel, ABC):
 
     def predict(
         self,
-        observation: Union[np.ndarray, Dict[str, np.ndarray]],
+        observation: PyTorchObs,
         state: Optional[Tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
         deterministic: bool = False,
@@ -364,8 +370,6 @@ class BasePolicy(BaseModel, ABC):
 
         with th.no_grad():
             actions = self._predict(obs_tensor, deterministic=deterministic)
-        # Convert to numpy, and reshape to the original action shape
-        actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))  # type: ignore[misc]
 
         if isinstance(self.action_space, spaces.Box):
             if self.squash_output:
@@ -374,7 +378,7 @@ class BasePolicy(BaseModel, ABC):
             else:
                 # Actions could be on arbitrary scale, so clip the actions to avoid
                 # out of bound error (e.g. if sampling from a Gaussian distribution)
-                actions = np.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
+                actions = th.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
 
         # Remove batch dimension if needed
         if not vectorized_env:
@@ -441,6 +445,7 @@ class ActorCriticPolicy(BasePolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -462,6 +467,7 @@ class ActorCriticPolicy(BasePolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -478,6 +484,7 @@ class ActorCriticPolicy(BasePolicy):
             optimizer_kwargs=optimizer_kwargs,
             squash_output=squash_output,
             normalize_images=normalize_images,
+            should_preprocess_obs=should_preprocess_obs,
         )
 
         if isinstance(net_arch, list) and len(net_arch) > 0 and isinstance(net_arch[0], dict):
@@ -791,6 +798,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -812,6 +820,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__(
             observation_space,
@@ -831,6 +840,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
             normalize_images,
             optimizer_class,
             optimizer_kwargs,
+            should_preprocess_obs,
         )
 
 
@@ -864,6 +874,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
         ``th.optim.Adam`` by default
     :param optimizer_kwargs: Additional keyword arguments,
         excluding the learning rate, to pass to the optimizer
+    :param should_preprocess_obs: Whether to preprocess observation or leave as given
     """
 
     def __init__(
@@ -885,6 +896,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        should_preprocess_obs: bool = True,
     ):
         super().__init__(
             observation_space,
@@ -904,6 +916,7 @@ class MultiInputActorCriticPolicy(ActorCriticPolicy):
             normalize_images,
             optimizer_class,
             optimizer_kwargs,
+            should_preprocess_obs,
         )
 
 

@@ -1,8 +1,7 @@
+import numpy as np
 import time
 import warnings
 from typing import Optional, Tuple
-
-import numpy as np
 
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn, VecEnvWrapper
 
@@ -74,7 +73,7 @@ class VecMonitor(VecEnvWrapper):
 
     def step_wait(self) -> VecEnvStepReturn:
         obs, rewards, dones, infos = self.venv.step_wait()
-        self.episode_returns += rewards
+        self.episode_returns += rewards.numpy()
         self.episode_lengths += 1
         new_infos = list(infos[:])
         for i in range(len(dones)):

@@ -273,6 +273,14 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         assert self.env is not None
 
+        # pass to all envs a pointer to the current policy to allow multiple evaluations within a single step
+        if hasattr(self.env, "envs"):
+            for env in self.env.envs:
+                if hasattr(env.unwrapped, "gym_env"):
+                    env.unwrapped.gym_env.policy = self.policy
+                else:
+                    env.unwrapped.policy = self.policy
+
         while self.num_timesteps < total_timesteps:
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
 

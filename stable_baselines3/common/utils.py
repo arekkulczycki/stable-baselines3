@@ -64,7 +64,7 @@ def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> np.ndarray:
     return np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
 
-def update_learning_rate(optimizer: th.optim.Optimizer, learning_rate: float) -> None:
+def update_default_learning_rate(optimizer: th.optim.Optimizer, learning_rate: float) -> None:
     """
     Update the learning rate for a given optimizer.
     Useful when doing linear schedule.
@@ -72,8 +72,7 @@ def update_learning_rate(optimizer: th.optim.Optimizer, learning_rate: float) ->
     :param optimizer: Pytorch optimizer
     :param learning_rate: New learning rate value
     """
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = learning_rate
+    optimizer.defaults["lr"] = learning_rate
 
 
 def get_schedule_fn(value_schedule: Union[Schedule, float]) -> Schedule:

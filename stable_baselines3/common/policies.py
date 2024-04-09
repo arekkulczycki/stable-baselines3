@@ -16,6 +16,7 @@ from stable_baselines3.common.distributions import (
     BernoulliDistribution,
     CategoricalDistribution,
     DiagGaussianDistribution,
+    LogNormalDistribution,
     Distribution,
     MultiCategoricalDistribution,
     StateDependentNoiseDistribution,
@@ -468,6 +469,7 @@ class ActorCriticPolicy(BasePolicy):
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
         should_preprocess_obs: bool = True,
+        distribution_class: Optional[Distribution] = None,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -534,8 +536,9 @@ class ActorCriticPolicy(BasePolicy):
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
 
-        # Action distribution
-        self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
+        self.action_dist = make_proba_distribution(
+            action_space, use_sde=use_sde, dist_kwargs=dist_kwargs, dist_cls=distribution_class
+        )
 
         self._build(lr_schedule)
 
@@ -611,6 +614,8 @@ class ActorCriticPolicy(BasePolicy):
         else:
             raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
 
+        # no `nan` here
+
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
@@ -634,9 +639,36 @@ class ActorCriticPolicy(BasePolicy):
 
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
+        else:
+            self._initialize_mlp_weights()
 
-        # Setup optimizer with initial learning rate
-        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
+        params = [
+            {"params": self.pi_features_extractor.parameters(), "lr": self.pi_features_extractor.learning_rate},
+            {"params": self.vf_features_extractor.parameters(), "lr": self.pi_features_extractor.learning_rate},
+            {"params": self.mlp_extractor.parameters(), "lr": lr_schedule(1)},
+        ]
+        self.optimizer = self.optimizer_class(params, lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
+
+    def _initialize_mlp_weights(self):
+        """"""
+
+        policy_net_modules = list(self.mlp_extractor.policy_net.modules())
+        value_net_modules = list(self.mlp_extractor.policy_net.modules())
+        activation_fn = policy_net_modules[1].__class__
+
+        for module in policy_net_modules[1::2] + value_net_modules[1::2]:
+            if activation_fn is th.nn.ReLU:
+                th.nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+            elif activation_fn is th.nn.LeakyReLU:
+                th.nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="leaky_relu", a=1e-2)
+            elif activation_fn is th.nn.Tanh:
+                th.nn.init.xavier_normal_(module.weight)
+                # th.nn.init.xavier_uniform_(module.weight)
+            elif activation_fn is th.nn.Tanhshrink:
+                th.nn.init.normal_(module.weight, mean=0, std=0.3)
+            else:
+                th.nn.init.normal_(module.weight)
+            th.nn.init.zeros_(module.bias)
 
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -739,6 +771,7 @@ class ActorCriticPolicy(BasePolicy):
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
             latent_vf = self.mlp_extractor.forward_critic(vf_features)
+        # here self.log_std is `nan`
         distribution = self._get_action_dist_from_latent(latent_pi)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)

@@ -18,11 +18,12 @@ class BaseFeaturesExtractor(nn.Module):
     :param features_dim: Number of features extracted.
     """
 
-    def __init__(self, observation_space: gym.Space, features_dim: int = 0) -> None:
+    def __init__(self, observation_space: gym.Space, features_dim: int = 0, learning_rate: float = 1e-4) -> None:
         super().__init__()
         assert features_dim > 0
         self._observation_space = observation_space
         self._features_dim = features_dim
+        self.learning_rate = learning_rate
 
     @property
     def features_dim(self) -> int:
@@ -196,12 +197,20 @@ class MlpExtractor(nn.Module):
             pi_layers_dims = vf_layers_dims = net_arch
         # Iterate through the policy layers and build the policy net
         for curr_layer_dim in pi_layers_dims:
-            policy_net.append(nn.Linear(last_layer_dim_pi, curr_layer_dim))
+            module = nn.Linear(last_layer_dim_pi, curr_layer_dim)
+            policy_net.append(module)
+
+            # self._initialize_weights_(module, activation_fn)
+
             policy_net.append(activation_fn())
             last_layer_dim_pi = curr_layer_dim
         # Iterate through the value layers and build the value net
         for curr_layer_dim in vf_layers_dims:
-            value_net.append(nn.Linear(last_layer_dim_vf, curr_layer_dim))
+            module = nn.Linear(last_layer_dim_vf, curr_layer_dim)
+            value_net.append(module)
+
+            # self._initialize_weights_(module, activation_fn)
+
             value_net.append(activation_fn())
             last_layer_dim_vf = curr_layer_dim
 
@@ -213,6 +222,16 @@ class MlpExtractor(nn.Module):
         # If the list of layers is empty, the network will just act as an Identity module
         self.policy_net = nn.Sequential(*policy_net).to(device)
         self.value_net = nn.Sequential(*value_net).to(device)
+
+    @staticmethod
+    def initialize_weights_(module, activation_fn):
+        if activation_fn is th.nn.ReLU:
+            th.nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+        elif activation_fn is th.nn.LeakyReLU:
+            th.nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="leaky_relu", a=1e-2)
+        else:
+            th.nn.init.xavier_normal_(module.weight)
+        th.nn.init.zeros_(module.bias)
 
     def forward(self, features: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
         """

@@ -29,7 +29,7 @@ from stable_baselines3.common.utils import (
     get_schedule_fn,
     get_system_info,
     set_random_seed,
-    update_learning_rate,
+    update_default_learning_rate,
 )
 from stable_baselines3.common.vec_env import (
     DummyVecEnv,
@@ -297,7 +297,7 @@ class BaseAlgorithm(ABC):
         if not isinstance(optimizers, list):
             optimizers = [optimizers]
         for optimizer in optimizers:
-            update_learning_rate(optimizer, self.lr_schedule(self._current_progress_remaining))
+            update_default_learning_rate(optimizer, self.lr_schedule(self._current_progress_remaining))
 
     def _excluded_save_params(self) -> List[str]:
         """
@@ -694,11 +694,27 @@ class BaseAlgorithm(ABC):
                 if isinstance(saved_net_arch, list) and isinstance(saved_net_arch[0], dict):
                     data["policy_kwargs"]["net_arch"] = saved_net_arch[0]
 
-        if "policy_kwargs" in kwargs and kwargs["policy_kwargs"] != data["policy_kwargs"]:
-            raise ValueError(
-                f"The specified policy kwargs do not equal the stored policy kwargs."
-                f"Stored kwargs: {data['policy_kwargs']}, specified kwargs: {kwargs['policy_kwargs']}"
-            )
+        if "policy_kwargs" in kwargs:
+            has_error = False
+            given_policy_kwargs = kwargs["policy_kwargs"]
+            expected_policy_kwargs = data["policy_kwargs"]
+            for key in given_policy_kwargs.keys():
+                if key != "features_extractor_kwargs" and given_policy_kwargs[key] != expected_policy_kwargs[key]:
+                    has_error = True
+                elif key == "features_extractor_kwargs":
+                    given_extractor_kwargs = given_policy_kwargs["features_extractor_kwargs"]
+                    expected_extractor_kwargs = expected_policy_kwargs["features_extractor_kwargs"]
+                    for extractor_key in given_extractor_kwargs.keys():
+                        if (
+                            extractor_key != "should_initialize_weights"
+                            and given_extractor_kwargs[extractor_key] != expected_extractor_kwargs[extractor_key]
+                        ):
+                            has_error = True
+            if has_error:
+                raise ValueError(
+                    f"The specified policy kwargs do not equal the stored policy kwargs."
+                    f"Stored kwargs: {data['policy_kwargs']}, specified kwargs: {kwargs['policy_kwargs']}"
+                )
 
         if "observation_space" not in data or "action_space" not in data:
             raise KeyError("The observation_space and action_space were not given, can't verify new environments")

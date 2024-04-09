@@ -7,12 +7,15 @@ import numpy as np
 import torch as th
 from gymnasium import spaces
 from torch import nn
-from torch.distributions import Bernoulli, Categorical, Normal
+from torch.distributions import Bernoulli, Categorical, Normal, LogNormal
 
 from stable_baselines3.common.preprocessing import get_action_dim
 
+EPS = th.finfo().eps
+
 SelfDistribution = TypeVar("SelfDistribution", bound="Distribution")
 SelfDiagGaussianDistribution = TypeVar("SelfDiagGaussianDistribution", bound="DiagGaussianDistribution")
+SelfLogNormalDistribution = TypeVar("SelfLogNormalDistribution", bound="LogNormalDistribution")
 SelfSquashedDiagGaussianDistribution = TypeVar(
     "SelfSquashedDiagGaussianDistribution", bound="SquashedDiagGaussianDistribution"
 )
@@ -160,7 +163,12 @@ class DiagGaussianDistribution(Distribution):
         :param log_std:
         :return:
         """
-        action_std = th.ones_like(mean_actions) * log_std.exp()
+
+        actions = th.arctan(mean_actions) * 2.0 / th.pi
+
+        # action_std = th.ones_like(actions) * th.exp(log_std)
+        action_std = th.ones_like(actions) * th.arctan(th.exp(log_std))
+
         self.distribution = Normal(mean_actions, action_std)
         return self
 
@@ -202,6 +210,72 @@ class DiagGaussianDistribution(Distribution):
         actions = self.actions_from_params(mean_actions, log_std)
         log_prob = self.log_prob(actions)
         return actions, log_prob
+
+
+class LogNormalDistribution(DiagGaussianDistribution):
+    """
+    LogNormal distribution with diagonal covariance matrix, for continuous actions.
+
+    :param action_dim:  Dimension of the action space.
+    """
+
+    def log_prob(self, actions: th.Tensor) -> th.Tensor:
+        """
+        Get the log probabilities of actions according to the distribution.
+        Note that you must first call the ``proba_distribution()`` method.
+
+        :param actions:
+        :return:
+        """
+
+        actions = th.arctan(actions) * 2.0 / th.pi
+        actions = (actions + 1.0) / 2.0
+        log_prob = self.distribution.log_prob(actions)
+        return sum_independent_dims(log_prob)
+
+    def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
+        """
+        Create the layers and parameter that represent the distribution:
+        one output will be the mean of the Gaussian, the other parameter will be the
+        standard deviation (log std in fact to allow negative values)
+
+        :param latent_dim: Dimension of the last layer of the policy (before the action layer)
+        :param log_std_init: Initial value for the log standard deviation
+        :return:
+        """
+
+        mean_actions = nn.Linear(latent_dim, self.action_dim)
+        log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
+        return mean_actions, log_std
+
+    def proba_distribution(
+        self: SelfLogNormalDistribution, mean_actions: th.Tensor, log_std: th.Tensor
+    ) -> SelfLogNormalDistribution:
+        """
+        Create the distribution given its parameters (mean, std)
+
+        :param mean_actions:
+        :param log_std:
+        :return:
+        """
+
+        actions = th.arctan(mean_actions) * 2.0 / th.pi
+        actions = (actions + 1.0) / 2.0
+
+        mu, sigma = self._solve_for_log_normal_parameters(actions, th.exp(log_std))
+        action_sigma = th.ones_like(mean_actions) * (sigma or EPS)
+        self.distribution = LogNormal(mu, action_sigma)
+        return self
+
+    @staticmethod
+    def _solve_for_log_normal_parameters(mean_actions, std):
+        mean2 = th.mean(mean_actions)**2
+        variance = std**2
+
+        sigma2 = th.log(1 + variance / mean2)
+        mu = th.nan_to_num(th.log(mean_actions) - sigma2 / 2, neginf=th.finfo(th.bfloat16).min)
+
+        return mu, th.sqrt(sigma2)
 
 
 class SquashedDiagGaussianDistribution(DiagGaussianDistribution):
@@ -489,7 +563,8 @@ class StateDependentNoiseDistribution(Distribution):
         else:
             # Use normal exponential
             std = th.exp(log_std)
-
+        if np.isnan(std).any():
+            raise ValueError("Producing nan here!!!")
         if self.full_std:
             return std
         assert self.latent_sde_dim is not None
@@ -661,7 +736,7 @@ class TanhBijector:
 
 
 def make_proba_distribution(
-    action_space: spaces.Space, use_sde: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None
+    action_space: spaces.Space, use_sde: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None, dist_cls=None
 ) -> Distribution:
     """
     Return an instance of Distribution for the correct type of action space
@@ -676,7 +751,7 @@ def make_proba_distribution(
         dist_kwargs = {}
 
     if isinstance(action_space, spaces.Box):
-        cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution
+        cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution if dist_cls is None else dist_cls
         return cls(get_action_dim(action_space), **dist_kwargs)
     elif isinstance(action_space, spaces.Discrete):
         return CategoricalDistribution(int(action_space.n), **dist_kwargs)
